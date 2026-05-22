@@ -98,6 +98,8 @@ public class WgsSyncTests : IDisposable
     public void SyncFromWgs_CreatesDestFolder_WhenItDoesNotExist()
     {
         var src = Directory.CreateDirectory(Path.Combine(_root, "src")).FullName;
+        var slot = Directory.CreateDirectory(Path.Combine(src, "slot0")).FullName;
+        File.WriteAllText(Path.Combine(slot, "GUID0000000000001"), "profile data");
         var dest = Path.Combine(_root, "dest");
 
         RemnantSave.SyncFromWgs(src, dest);
@@ -109,12 +111,15 @@ public class WgsSyncTests : IDisposable
     public void SyncFromWgs_ClearsExistingFilesFromDest()
     {
         var src = Directory.CreateDirectory(Path.Combine(_root, "src")).FullName;
+        var slot = Directory.CreateDirectory(Path.Combine(src, "slot0")).FullName;
+        File.WriteAllText(Path.Combine(slot, "GUID0000000000001"), "profile data");
         var dest = Directory.CreateDirectory(Path.Combine(_root, "dest")).FullName;
         File.WriteAllText(Path.Combine(dest, "stale.sav"), "old");
 
         RemnantSave.SyncFromWgs(src, dest);
 
-        Assert.Empty(Directory.GetFiles(dest));
+        var files = Directory.GetFiles(dest).Select(Path.GetFileName).ToArray();
+        Assert.DoesNotContain("stale.sav", files);
     }
 
     [Fact]
@@ -185,15 +190,16 @@ public class WgsSyncTests : IDisposable
     }
 
     [Fact]
-    public void SyncFromWgs_HandlesEmptySourceGracefully()
+    public void SyncFromWgs_ThrowsOnEmptySource_LeavesDestUntouched()
     {
         var src = Directory.CreateDirectory(Path.Combine(_root, "src")).FullName;
-        var dest = Path.Combine(_root, "dest");
+        var dest = Directory.CreateDirectory(Path.Combine(_root, "dest")).FullName;
+        File.WriteAllText(Path.Combine(dest, "existing.sav"), "keep me");
 
-        var ex = Record.Exception(() => RemnantSave.SyncFromWgs(src, dest));
+        Assert.Throws<InvalidOperationException>(() => RemnantSave.SyncFromWgs(src, dest));
 
-        Assert.Null(ex);
-        Assert.Empty(Directory.GetFiles(dest));
+        // Dest must not have been cleared — staging is only replaced after a valid sync
+        Assert.True(File.Exists(Path.Combine(dest, "existing.sav")));
     }
 
     [Fact]

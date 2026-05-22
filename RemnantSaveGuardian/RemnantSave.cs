@@ -247,52 +247,67 @@ namespace RemnantSaveGuardian
 
         public static void SyncFromWgs(string wgsUserFolder, string destFolder)
         {
-            if (!Directory.Exists(destFolder))
-                Directory.CreateDirectory(destFolder);
-
-            foreach (var file in Directory.GetFiles(destFolder))
-                File.Delete(file);
-
-            // Primary path: use containers.index to resolve exact GUID subfolder per save slot
-            var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
-            if (nameToGuid.Count > 0)
+            // Build into a temp dir first so destFolder is never left empty on partial failure
+            var tempDir = Path.Combine(Path.GetTempPath(), $"RSGSync_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            try
             {
-                foreach (var kvp in nameToGuid)
+                var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
+                if (nameToGuid.Count > 0)
                 {
-                    var guidFolderPath = Path.Combine(wgsUserFolder, kvp.Value);
-                    if (!Directory.Exists(guidFolderPath))
-                        continue;
+                    foreach (var kvp in nameToGuid)
+                    {
+                        var guidFolderPath = Path.Combine(wgsUserFolder, kvp.Value);
+                        if (!Directory.Exists(guidFolderPath))
+                            continue;
 
-                    var source = Directory.GetFiles(guidFolderPath)
-                        .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
-                    if (source == null)
-                        continue;
+                        var source = Directory.GetFiles(guidFolderPath)
+                            .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
+                        if (source == null)
+                            continue;
 
-                    var destName = kvp.Key.Equals("profile", StringComparison.OrdinalIgnoreCase)
-                        ? "profile.sav"
-                        : $"{kvp.Key}.sav";
-                    File.Copy(source, Path.Combine(destFolder, destName), overwrite: true);
+                        var destName = kvp.Key.Equals("profile", StringComparison.OrdinalIgnoreCase)
+                            ? "profile.sav"
+                            : $"{kvp.Key}.sav";
+                        File.Copy(source, Path.Combine(tempDir, destName), overwrite: true);
+                    }
                 }
-                return;
-            }
-
-            // Fallback: sort by subfolder creation time then file size
-            var files = new List<(string path, DateTime folderCreated, long size)>();
-            foreach (var subdir in Directory.GetDirectories(wgsUserFolder))
-            {
-                var subdirInfo = new DirectoryInfo(subdir);
-                foreach (var file in subdirInfo.GetFiles())
+                else
                 {
-                    if (!file.Name.StartsWith("container", StringComparison.OrdinalIgnoreCase))
-                        files.Add((file.FullName, subdirInfo.CreationTime, file.Length));
+                    // Fallback: sort by subfolder creation time then file size
+                    var files = new List<(string path, DateTime folderCreated, long size)>();
+                    foreach (var subdir in Directory.GetDirectories(wgsUserFolder))
+                    {
+                        var subdirInfo = new DirectoryInfo(subdir);
+                        foreach (var file in subdirInfo.GetFiles())
+                        {
+                            if (!file.Name.StartsWith("container", StringComparison.OrdinalIgnoreCase))
+                                files.Add((file.FullName, subdirInfo.CreationTime, file.Length));
+                        }
+                    }
+                    var sorted = files.OrderBy(f => f.folderCreated).ThenBy(f => f.size).ToList();
+                    for (int i = 0; i < sorted.Count; i++)
+                    {
+                        var name = i == 0 ? "profile.sav" : $"save_{i - 1}.sav";
+                        File.Copy(sorted[i].path, Path.Combine(tempDir, name), overwrite: true);
+                    }
                 }
-            }
 
-            var sorted = files.OrderBy(f => f.folderCreated).ThenBy(f => f.size).ToList();
-            for (int i = 0; i < sorted.Count; i++)
+                // Require at least profile.sav before committing — protects against empty/partial WGS state
+                if (!File.Exists(Path.Combine(tempDir, "profile.sav")))
+                    throw new InvalidOperationException("WGS sync produced no profile.sav — staging folder unchanged.");
+
+                // Atomic swap: replace dest contents only after temp is validated
+                if (!Directory.Exists(destFolder))
+                    Directory.CreateDirectory(destFolder);
+                foreach (var file in Directory.GetFiles(destFolder))
+                    File.Delete(file);
+                foreach (var file in Directory.GetFiles(tempDir))
+                    File.Move(file, Path.Combine(destFolder, Path.GetFileName(file)));
+            }
+            finally
             {
-                var destName = i == 0 ? "profile.sav" : $"save_{i - 1}.sav";
-                File.Copy(sorted[i].path, Path.Combine(destFolder, destName), overwrite: true);
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
 
@@ -309,24 +324,29 @@ namespace RemnantSaveGuardian
             if (nameToGuid.Count == 0)
                 return false;
 
+            var savFiles = Directory.GetFiles(sourceFolder, "*.sav");
+            if (savFiles.Length == 0)
+                return false;
+
             var written = new List<(string target, string backup)>();
 
             try
             {
-                foreach (var savFile in Directory.GetFiles(sourceFolder, "*.sav"))
+                foreach (var savFile in savFiles)
                 {
                     var containerName = Path.GetFileNameWithoutExtension(savFile); // "profile", "save_0", …
+
                     if (!nameToGuid.TryGetValue(containerName, out var guidSubfolder))
-                        continue;
+                        throw new InvalidOperationException($"No containers.index entry for '{containerName}' — restore aborted.");
 
                     var guidFolderPath = Path.Combine(wgsUserFolder, guidSubfolder);
                     if (!Directory.Exists(guidFolderPath))
-                        continue;
+                        throw new DirectoryNotFoundException($"WGS subfolder missing for '{containerName}': {guidFolderPath}");
 
                     var target = Directory.GetFiles(guidFolderPath)
                         .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
                     if (target == null)
-                        continue;
+                        throw new FileNotFoundException($"No save data file in WGS subfolder for '{containerName}'.");
 
                     // Create a safety backup before overwriting
                     var backup = target + ".rsg_bak";
@@ -338,9 +358,7 @@ namespace RemnantSaveGuardian
 
                 // All writes succeeded — clean up backups
                 foreach (var (_, backup) in written)
-                {
                     try { File.Delete(backup); } catch { }
-                }
 
                 return true;
             }

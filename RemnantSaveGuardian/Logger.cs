@@ -18,10 +18,11 @@ namespace RemnantSaveGuardian
 
         static Logger()
         {
+            if (!Properties.Settings.Default.CreateLogFile)
+                return;
             try
             {
                 Directory.CreateDirectory(LogFolder);
-                // Write session header at the start of each run
                 File.AppendAllText(LogPath,
                     $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [INFO] Session started — Version {typeof(MainWindow).Assembly.GetName().Version}\r\n");
             }
@@ -43,6 +44,8 @@ namespace RemnantSaveGuardian
 
         private static void WriteToFile(LogType logType, string message)
         {
+            if (!Properties.Settings.Default.CreateLogFile)
+                return;
             try
             {
                 var prefix = logType switch
