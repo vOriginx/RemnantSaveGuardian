@@ -310,6 +310,10 @@ namespace RemnantSaveGuardian.Views.Windows
 
         private void Logger_MessageLogged(object? sender, MessageLoggedEventArgs e)
         {
+            // Normal info messages go to the log file only — don't spam the UI with startup chatter
+            if (e.LogType == LogType.Normal)
+                return;
+
             var appearance = ControlAppearance.Info;
             var symbol = SymbolRegular.Info24;
             var title = Loc.T("Info");
