@@ -88,6 +88,8 @@ namespace RemnantSaveGuardian.Views.Windows
                     Wpf.Ui.Appearance.Theme.Apply(Wpf.Ui.Appearance.ThemeType.Dark);
                 }
 
+                MigrateDocumentsFoldersToAppData();
+
                 if (Properties.Settings.Default.SaveFolder.Length == 0)
                 {
                     Logger.Log("Save folder not set; reverting to default.");
@@ -97,12 +99,11 @@ namespace RemnantSaveGuardian.Views.Windows
                         var wgsSource = RemnantSave.FindWgsSaveFolder();
                         if (wgsSource != null)
                         {
-                            var destFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
                             try
                             {
                                 Logger.Log("Xbox Game Pass saves detected, syncing...");
-                                RemnantSave.SyncFromWgs(wgsSource, destFolder);
-                                Properties.Settings.Default.SaveFolder = destFolder;
+                                RemnantSave.SyncFromWgs(wgsSource, RemnantSave.DefaultWgsStagingFolder);
+                                Properties.Settings.Default.SaveFolder = RemnantSave.DefaultWgsStagingFolder;
                                 Logger.Log("Xbox Game Pass saves synced.");
                             }
                             catch (Exception wgsEx)
@@ -129,7 +130,7 @@ namespace RemnantSaveGuardian.Views.Windows
                 SaveWatcher.Watch(Properties.Settings.Default.SaveFolder);
 
                 // If the save folder is the WGS staging folder, set up live-sync from the Game Pass source
-                var wgsDestFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
+                var wgsDestFolder = RemnantSave.DefaultWgsStagingFolder;
                 if (Properties.Settings.Default.SaveFolder.Equals(wgsDestFolder, StringComparison.OrdinalIgnoreCase))
                 {
                     var wgsSource = RemnantSave.FindWgsSaveFolder();
@@ -371,6 +372,43 @@ namespace RemnantSaveGuardian.Views.Windows
 
             // Make sure that closing this window will begin the process of closing the application.
             Application.Current.Shutdown();
+        }
+
+        private static void MigrateDocumentsFoldersToAppData()
+        {
+            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var oldSaves   = Path.Combine(docs, "RSG_Saves");
+            var oldBackups = Path.Combine(docs, "Save Backups", "Remnant 2");
+
+            // Migrate save staging folder
+            if (Properties.Settings.Default.SaveFolder.Equals(oldSaves, StringComparison.OrdinalIgnoreCase))
+            {
+                MoveFolder(oldSaves, RemnantSave.DefaultWgsStagingFolder);
+                Properties.Settings.Default.SaveFolder = RemnantSave.DefaultWgsStagingFolder;
+                Logger.Log($"Saves migrated to {RemnantSave.DefaultWgsStagingFolder}");
+            }
+
+            // Migrate backup folder
+            if (Properties.Settings.Default.BackupFolder.Equals(oldBackups, StringComparison.OrdinalIgnoreCase))
+            {
+                MoveFolder(oldBackups, RemnantSave.DefaultBackupFolder);
+                Properties.Settings.Default.BackupFolder = RemnantSave.DefaultBackupFolder;
+                Logger.Log($"Backups migrated to {RemnantSave.DefaultBackupFolder}");
+            }
+        }
+
+        private static void MoveFolder(string source, string dest)
+        {
+            if (!Directory.Exists(source)) return;
+            Directory.CreateDirectory(dest);
+            foreach (var file in Directory.GetFiles(source, "*", SearchOption.AllDirectories))
+            {
+                var relative = Path.GetRelativePath(source, file);
+                var target = Path.Combine(dest, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target, overwrite: true);
+            }
+            try { Directory.Delete(source, recursive: true); } catch { }
         }
 
         private void TryToFindGameFolder()

@@ -16,6 +16,12 @@ namespace RemnantSaveGuardian
         }
 
         public static readonly string DefaultWgsSaveFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Packages\PerfectWorldEntertainment.GFREMP2_jrajkyc4tsa6w\SystemAppData\wgs";
+
+        private static readonly string AppDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemnantSaveGuardian");
+
+        public static readonly string DefaultWgsStagingFolder = Path.Combine(AppDataRoot, "Saves");
+        public static readonly string DefaultBackupFolder     = Path.Combine(AppDataRoot, "Backups");
         private string savePath;
         private string profileFile;
         private RemnantSaveType saveType;

@@ -25,7 +25,7 @@ namespace RemnantSaveGuardian.Views.Pages
         }
         public static event EventHandler<BackupSaveViewedEventArgs>? BackupSaveViewed;
         public static event EventHandler? BackupSaveRestored;
-        private static string defaultBackupFolder = @$"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}\Save Backups\Remnant 2";
+        private static string defaultBackupFolder = RemnantSave.DefaultBackupFolder;
         private List<SaveBackup> listBackups;
         //private RemnantSave activeSave;
         private Process? gameProcess;
@@ -721,8 +721,7 @@ namespace RemnantSaveGuardian.Views.Pages
             refreshBackups();
 
             // For Game Pass users, push the restored .sav files back to WGS so the game sees them
-            var wgsDestFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
-            if (saveDirPath.Equals(wgsDestFolder, StringComparison.OrdinalIgnoreCase))
+            if (saveDirPath.Equals(RemnantSave.DefaultWgsStagingFolder, StringComparison.OrdinalIgnoreCase))
             {
                 var wgsSource = RemnantSave.FindWgsSaveFolder();
                 if (wgsSource != null)
