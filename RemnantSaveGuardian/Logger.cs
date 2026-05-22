@@ -11,7 +11,9 @@ namespace RemnantSaveGuardian
         private static List<LogMessage> messages = new();
         public static List<LogMessage> Messages { get { return messages; } }
 
-        private static string LogFolder => Path.Combine(AppContext.BaseDirectory, "logs");
+        private static string LogFolder => Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "RemnantSaveGuardian", "logs");
         private static string LogPath => Path.Combine(LogFolder, $"log_{DateTime.Now:yyyy-MM-dd}.txt");
 
         static Logger()
