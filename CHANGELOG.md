@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-05-22
+
+### Fixed
+
+- Release workflow now uploads the build ZIP to a release that already exists (e.g. created
+  via the GitHub UI) rather than failing. `gh release create` is used when no release exists;
+  `gh release upload --clobber` is used when one does.
+
 ## [1.4.3] - 2026-05-22
 
 ### Added
