@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.IO;
 using System.IO.Compression;
@@ -14,7 +15,13 @@ namespace RemnantSaveGuardian
             get => _Characters ??= RemnantCharacter.GetCharactersFromSave(this, RemnantCharacter.CharacterProcessingMode.NoEvents);
         }
 
-        public static readonly string DefaultWgsSaveFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Packages\PerfectWorldEntertainment.RemnantFromtheAshes_jrajkyc4tsa6w\SystemAppData\wgs";
+        public static readonly string DefaultWgsSaveFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Packages\PerfectWorldEntertainment.GFREMP2_jrajkyc4tsa6w\SystemAppData\wgs";
+
+        private static readonly string AppDataRoot = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RemnantSaveGuardian");
+
+        public static readonly string DefaultWgsStagingFolder = Path.Combine(AppDataRoot, "Saves");
+        public static readonly string DefaultBackupFolder     = Path.Combine(AppDataRoot, "Backups");
         private string savePath;
         private string profileFile;
         private RemnantSaveType saveType;
@@ -141,7 +148,7 @@ namespace RemnantSaveGuardian
                     return userFolders[0];
                 }
             }
-            else
+            else if (Directory.Exists(saveFolder))
             {
                 var folders = Directory.GetDirectories(saveFolder);
                 if (folders.Length > 0)
@@ -150,6 +157,221 @@ namespace RemnantSaveGuardian
                 }
             }
             return saveFolder;
+        }
+
+        public static string? FindWgsSaveFolder(string? rootPath = null)
+        {
+            var searchRoot = rootPath ?? DefaultWgsSaveFolder;
+            if (!Directory.Exists(searchRoot))
+                return null;
+            foreach (var dir in Directory.GetDirectories(searchRoot))
+            {
+                if (File.Exists(Path.Combine(dir, "containers.index")))
+                    return dir;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Parses the WGS containers.index binary file and returns a mapping of
+        /// container name (e.g. "profile", "save_0") to the GUID-named subfolder on disk.
+        /// </summary>
+        public static Dictionary<string, string> ParseContainersIndex(string indexPath)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!File.Exists(indexPath))
+                return result;
+
+            try
+            {
+                var data = File.ReadAllBytes(indexPath);
+                int i = 0;
+                while (i < data.Length - 4)
+                {
+                    int nameLen = BitConverter.ToInt32(data, i);
+                    if (nameLen < 1 || nameLen > 64 || i + 4 + nameLen * 2 > data.Length)
+                    {
+                        i++;
+                        continue;
+                    }
+
+                    string name1 = Encoding.Unicode.GetString(data, i + 4, nameLen * 2).TrimEnd('\0');
+
+                    // Container names are short ASCII identifiers
+                    if (name1.Length == 0 || name1.Any(c => c < 32 || c > 126))
+                    {
+                        i++;
+                        continue;
+                    }
+
+                    int afterName1 = i + 4 + nameLen * 2;
+                    if (afterName1 + 4 > data.Length) { i++; continue; }
+
+                    // Container name appears twice consecutively
+                    int nameLen2 = BitConverter.ToInt32(data, afterName1);
+                    if (nameLen2 != nameLen) { i++; continue; }
+
+                    int name2Start = afterName1 + 4;
+                    if (name2Start + nameLen * 2 > data.Length) { i++; continue; }
+
+                    string name2 = Encoding.Unicode.GetString(data, name2Start, nameLen * 2).TrimEnd('\0');
+                    if (name2 != name1) { i++; continue; }
+
+                    int afterName2 = name2Start + nameLen * 2;
+                    if (afterName2 + 4 > data.Length) { i++; continue; }
+
+                    // Type string follows
+                    int typeLen = BitConverter.ToInt32(data, afterName2);
+                    if (typeLen < 0 || typeLen > 128 || afterName2 + 4 + typeLen * 2 > data.Length) { i++; continue; }
+
+                    int afterType = afterName2 + 4 + typeLen * 2;
+
+                    // 5 flag bytes then 16-byte binary GUID
+                    if (afterType + 5 + 16 > data.Length) { i++; continue; }
+
+                    var guidBytes = new byte[16];
+                    Array.Copy(data, afterType + 5, guidBytes, 0, 16);
+                    var guid = new Guid(guidBytes).ToString("N").ToUpperInvariant();
+
+                    result[name1] = guid;
+                    i = afterType + 5 + 16;
+                }
+            }
+            catch
+            {
+                // Return whatever was successfully parsed
+            }
+
+            return result;
+        }
+
+        public static void SyncFromWgs(string wgsUserFolder, string destFolder)
+        {
+            // Build into a temp dir first so destFolder is never left empty on partial failure
+            var tempDir = Path.Combine(Path.GetTempPath(), $"RSGSync_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            try
+            {
+                var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
+                if (nameToGuid.Count > 0)
+                {
+                    foreach (var kvp in nameToGuid)
+                    {
+                        var guidFolderPath = Path.Combine(wgsUserFolder, kvp.Value);
+                        if (!Directory.Exists(guidFolderPath))
+                            continue;
+
+                        var source = Directory.GetFiles(guidFolderPath)
+                            .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
+                        if (source == null)
+                            continue;
+
+                        var destName = kvp.Key.Equals("profile", StringComparison.OrdinalIgnoreCase)
+                            ? "profile.sav"
+                            : $"{kvp.Key}.sav";
+                        File.Copy(source, Path.Combine(tempDir, destName), overwrite: true);
+                    }
+                }
+                else
+                {
+                    // Fallback: sort by subfolder creation time then file size
+                    var files = new List<(string path, DateTime folderCreated, long size)>();
+                    foreach (var subdir in Directory.GetDirectories(wgsUserFolder))
+                    {
+                        var subdirInfo = new DirectoryInfo(subdir);
+                        foreach (var file in subdirInfo.GetFiles())
+                        {
+                            if (!file.Name.StartsWith("container", StringComparison.OrdinalIgnoreCase))
+                                files.Add((file.FullName, subdirInfo.CreationTime, file.Length));
+                        }
+                    }
+                    var sorted = files.OrderBy(f => f.folderCreated).ThenBy(f => f.size).ToList();
+                    for (int i = 0; i < sorted.Count; i++)
+                    {
+                        var name = i == 0 ? "profile.sav" : $"save_{i - 1}.sav";
+                        File.Copy(sorted[i].path, Path.Combine(tempDir, name), overwrite: true);
+                    }
+                }
+
+                // Require at least profile.sav before committing — protects against empty/partial WGS state
+                if (!File.Exists(Path.Combine(tempDir, "profile.sav")))
+                    throw new InvalidOperationException("WGS sync produced no profile.sav — staging folder unchanged.");
+
+                // Atomic swap: replace dest contents only after temp is validated
+                if (!Directory.Exists(destFolder))
+                    Directory.CreateDirectory(destFolder);
+                foreach (var file in Directory.GetFiles(destFolder))
+                    File.Delete(file);
+                foreach (var file in Directory.GetFiles(tempDir))
+                    File.Move(file, Path.Combine(destFolder, Path.GetFileName(file)));
+            }
+            finally
+            {
+                try { Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// Copies named .sav files from sourceFolder back to their correct GUID files in the WGS
+        /// package folder so the game picks up the restored saves.
+        /// Each target file is backed up as {target}.rsg_bak before it is overwritten; if any write
+        /// fails, all previously overwritten files are automatically rolled back from their backups.
+        /// Returns false if containers.index cannot be parsed or if the operation is rolled back.
+        /// </summary>
+        public static bool RestoreToWgs(string sourceFolder, string wgsUserFolder)
+        {
+            var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
+            if (nameToGuid.Count == 0)
+                return false;
+
+            var savFiles = Directory.GetFiles(sourceFolder, "*.sav");
+            if (savFiles.Length == 0)
+                return false;
+
+            var written = new List<(string target, string backup)>();
+
+            try
+            {
+                foreach (var savFile in savFiles)
+                {
+                    var containerName = Path.GetFileNameWithoutExtension(savFile); // "profile", "save_0", …
+
+                    if (!nameToGuid.TryGetValue(containerName, out var guidSubfolder))
+                        throw new InvalidOperationException($"No containers.index entry for '{containerName}' — restore aborted.");
+
+                    var guidFolderPath = Path.Combine(wgsUserFolder, guidSubfolder);
+                    if (!Directory.Exists(guidFolderPath))
+                        throw new DirectoryNotFoundException($"WGS subfolder missing for '{containerName}': {guidFolderPath}");
+
+                    var target = Directory.GetFiles(guidFolderPath)
+                        .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
+                    if (target == null)
+                        throw new FileNotFoundException($"No save data file in WGS subfolder for '{containerName}'.");
+
+                    // Create a safety backup before overwriting
+                    var backup = target + ".rsg_bak";
+                    File.Copy(target, backup, overwrite: true);
+                    written.Add((target, backup));
+
+                    File.Copy(savFile, target, overwrite: true);
+                }
+
+                // All writes succeeded — clean up backups
+                foreach (var (_, backup) in written)
+                    try { File.Delete(backup); } catch { }
+
+                return true;
+            }
+            catch
+            {
+                // Roll back every file already overwritten, then clean up backup copies
+                foreach (var (target, backup) in written)
+                {
+                    try { File.Copy(backup, target, overwrite: true); } catch { }
+                    try { File.Delete(backup); } catch { }
+                }
+                return false;
+            }
         }
 
         // Credit to https://gist.github.com/crackedmind

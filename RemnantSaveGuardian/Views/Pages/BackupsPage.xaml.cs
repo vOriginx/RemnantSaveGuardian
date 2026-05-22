@@ -25,7 +25,7 @@ namespace RemnantSaveGuardian.Views.Pages
         }
         public static event EventHandler<BackupSaveViewedEventArgs>? BackupSaveViewed;
         public static event EventHandler? BackupSaveRestored;
-        private static string defaultBackupFolder = @$"{Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments)}\Save Backups\Remnant 2";
+        private static string defaultBackupFolder = RemnantSave.DefaultBackupFolder;
         private List<SaveBackup> listBackups;
         //private RemnantSave activeSave;
         private Process? gameProcess;
@@ -719,7 +719,28 @@ namespace RemnantSaveGuardian.Views.Pages
             }
 
             refreshBackups();
-            Logger.Log(Loc.T("Backup restored"), LogType.Success);
+
+            // For Game Pass users, push the restored .sav files back to WGS so the game sees them
+            if (saveDirPath.Equals(RemnantSave.DefaultWgsStagingFolder, StringComparison.OrdinalIgnoreCase))
+            {
+                var wgsSource = RemnantSave.FindWgsSaveFolder();
+                if (wgsSource != null)
+                {
+                    if (RemnantSave.RestoreToWgs(saveDirPath, wgsSource))
+                        Logger.Log(Loc.T("Backup restored"), LogType.Success);
+                    else
+                        Logger.Warn("Backup restored to staging folder. Could not write back to Xbox Game Pass save location — the game may not see the changes.");
+                }
+                else
+                {
+                    Logger.Log(Loc.T("Backup restored"), LogType.Success);
+                }
+            }
+            else
+            {
+                Logger.Log(Loc.T("Backup restored"), LogType.Success);
+            }
+
             SaveWatcher.Resume();
             BackupSaveRestored?.Invoke(this, new());
             saveFolderUnrecognizedFilesCheck();
