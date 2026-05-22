@@ -17,6 +17,18 @@ namespace RemnantSaveGuardian
             AutoReset = false,
         };
 
+        private static FileSystemWatcher wgsWatcher = new()
+        {
+            IncludeSubdirectories = true,
+        };
+        private static System.Timers.Timer wgsTimer = new()
+        {
+            Interval = 2000,
+            AutoReset = false,
+        };
+        private static string _wgsSourceFolder = "";
+        private static string _wgsDestFolder = "";
+
         static SaveWatcher()
         {
             watcher.Changed += OnSaveFileChanged;
@@ -24,6 +36,11 @@ namespace RemnantSaveGuardian
             watcher.Deleted += OnSaveFileChanged;
 
             saveTimer.Elapsed += SaveTimer_Elapsed;
+
+            wgsWatcher.Changed += OnWgsSaveChanged;
+            wgsWatcher.Created += OnWgsSaveChanged;
+
+            wgsTimer.Elapsed += WgsTimer_Elapsed;
 
             Properties.Settings.Default.PropertyChanged += Default_PropertyChanged;
         }
@@ -82,6 +99,44 @@ namespace RemnantSaveGuardian
         public static void Resume()
         {
             watcher.EnableRaisingEvents = true;
+        }
+
+        public static void WatchWgs(string wgsSourceFolder, string destFolder)
+        {
+            _wgsSourceFolder = wgsSourceFolder;
+            _wgsDestFolder = destFolder;
+            if (Directory.Exists(wgsSourceFolder))
+            {
+                if (wgsWatcher.Path != wgsSourceFolder)
+                    wgsWatcher.Path = wgsSourceFolder;
+                wgsWatcher.EnableRaisingEvents = true;
+            }
+        }
+
+        private static void OnWgsSaveChanged(object sender, FileSystemEventArgs e)
+        {
+            if (Path.GetFileName(e.FullPath).StartsWith("container", StringComparison.OrdinalIgnoreCase))
+                return;
+            wgsTimer.Stop();
+            wgsTimer.Start();
+        }
+
+        private static void WgsTimer_Elapsed(object? sender, System.Timers.ElapsedEventArgs e)
+        {
+            if (string.IsNullOrEmpty(_wgsSourceFolder) || string.IsNullOrEmpty(_wgsDestFolder))
+                return;
+            try
+            {
+                Pause();
+                RemnantSave.SyncFromWgs(_wgsSourceFolder, _wgsDestFolder);
+                Resume();
+                SaveUpdated?.Invoke(sender, e);
+            }
+            catch (Exception ex)
+            {
+                Resume();
+                Logger.Error($"{ex.GetType()} syncing Xbox Game Pass saves: {ex.Message}");
+            }
         }
     }
 }

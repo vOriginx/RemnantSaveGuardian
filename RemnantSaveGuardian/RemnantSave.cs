@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.IO;
 using System.IO.Compression;
@@ -14,7 +15,7 @@ namespace RemnantSaveGuardian
             get => _Characters ??= RemnantCharacter.GetCharactersFromSave(this, RemnantCharacter.CharacterProcessingMode.NoEvents);
         }
 
-        public static readonly string DefaultWgsSaveFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Packages\PerfectWorldEntertainment.RemnantFromtheAshes_jrajkyc4tsa6w\SystemAppData\wgs";
+        public static readonly string DefaultWgsSaveFolder = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + @"\Packages\PerfectWorldEntertainment.GFREMP2_jrajkyc4tsa6w\SystemAppData\wgs";
         private string savePath;
         private string profileFile;
         private RemnantSaveType saveType;
@@ -150,6 +151,45 @@ namespace RemnantSaveGuardian
                 }
             }
             return saveFolder;
+        }
+
+        public static string? FindWgsSaveFolder()
+        {
+            if (!Directory.Exists(DefaultWgsSaveFolder))
+                return null;
+            foreach (var dir in Directory.GetDirectories(DefaultWgsSaveFolder))
+            {
+                if (File.Exists(Path.Combine(dir, "containers.index")))
+                    return dir;
+            }
+            return null;
+        }
+
+        public static void SyncFromWgs(string wgsUserFolder, string destFolder)
+        {
+            if (!Directory.Exists(destFolder))
+                Directory.CreateDirectory(destFolder);
+
+            foreach (var file in Directory.GetFiles(destFolder))
+                File.Delete(file);
+
+            var files = new List<(string path, DateTime folderCreated, long size)>();
+            foreach (var subdir in Directory.GetDirectories(wgsUserFolder))
+            {
+                var subdirInfo = new DirectoryInfo(subdir);
+                foreach (var file in subdirInfo.GetFiles())
+                {
+                    if (!file.Name.StartsWith("container", StringComparison.OrdinalIgnoreCase))
+                        files.Add((file.FullName, subdirInfo.CreationTime, file.Length));
+                }
+            }
+
+            var sorted = files.OrderBy(f => f.folderCreated).ThenBy(f => f.size).ToList();
+            for (int i = 0; i < sorted.Count; i++)
+            {
+                var destName = i == 0 ? "profile.sav" : $"save_{i - 1}.sav";
+                File.Copy(sorted[i].path, Path.Combine(destFolder, destName), overwrite: true);
+            }
         }
 
         // Credit to https://gist.github.com/crackedmind

@@ -92,21 +92,21 @@ namespace RemnantSaveGuardian.Views.Windows
                 {
                     Logger.Log("Save folder not set; reverting to default.");
                     Properties.Settings.Default.SaveFolder = RemnantSave.DefaultSaveFolder();
-                    if (!Directory.Exists(RemnantSave.DefaultSaveFolder()))
+                    if (!Directory.Exists(Properties.Settings.Default.SaveFolder))
                     {
-                        Logger.Error(Loc.T("Could not find save file location; please set manually"));
-                        /*if (Directory.Exists(RemnantSave.DefaultWgsSaveFolder))
+                        var wgsSource = RemnantSave.FindWgsSaveFolder();
+                        if (wgsSource != null)
                         {
-                            var dirs = Directory.GetDirectories(RemnantSave.DefaultWgsSaveFolder);
-                            foreach (var dir in dirs)
-                            {
-                                if (dir != "t" && Directory.GetDirectories(dir).Length > 0)
-                                {
-                                    var saveDir = Directory.GetDirectories(dir)[0];
-                                    Properties.Settings.Default.SaveFolder = saveDir;
-                                }
-                            }
-                        }*/
+                            var destFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
+                            Logger.Log("Xbox Game Pass saves detected, syncing...");
+                            RemnantSave.SyncFromWgs(wgsSource, destFolder);
+                            Properties.Settings.Default.SaveFolder = destFolder;
+                            Logger.Log("Xbox Game Pass saves synced.");
+                        }
+                        else
+                        {
+                            Logger.Error(Loc.T("Could not find save file location; please set manually"));
+                        }
                     }
                 }
                 else if (!Directory.Exists(Properties.Settings.Default.SaveFolder) && !Properties.Settings.Default.SaveFolder.Equals(RemnantSave.DefaultSaveFolder))
@@ -120,6 +120,18 @@ namespace RemnantSaveGuardian.Views.Windows
                     Directory.CreateDirectory(Properties.Settings.Default.SaveFolder);
                 }
                 SaveWatcher.Watch(Properties.Settings.Default.SaveFolder);
+
+                // If the save folder is the WGS staging folder, set up live-sync from the Game Pass source
+                var wgsDestFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
+                if (Properties.Settings.Default.SaveFolder.Equals(wgsDestFolder, StringComparison.OrdinalIgnoreCase))
+                {
+                    var wgsSource = RemnantSave.FindWgsSaveFolder();
+                    if (wgsSource != null)
+                    {
+                        RemnantSave.SyncFromWgs(wgsSource, wgsDestFolder);
+                        SaveWatcher.WatchWgs(wgsSource, wgsDestFolder);
+                    }
+                }
 
                 if (!Directory.Exists(Properties.Settings.Default.GameFolder))
                 {
