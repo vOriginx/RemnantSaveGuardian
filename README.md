@@ -1,4 +1,7 @@
 # Remnant Save Guardian
+
+[![CI](https://github.com/vOriginx/RemnantSaveGuardian/actions/workflows/dotnet-desktop.yml/badge.svg)](https://github.com/vOriginx/RemnantSaveGuardian/actions/workflows/dotnet-desktop.yml)
+
 Back up your Remnant 2 saves and view your world rolls.
 
 **This project is a work in progress. Lots of features are broken or partially implemented.**
