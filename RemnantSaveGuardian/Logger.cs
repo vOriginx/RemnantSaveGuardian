@@ -8,66 +8,51 @@ namespace RemnantSaveGuardian
     internal static class Logger
     {
         public static event EventHandler<MessageLoggedEventArgs> MessageLogged;
-        private static List<LogMessage> messages = new ();
+        private static List<LogMessage> messages = new();
         public static List<LogMessage> Messages { get { return messages; } }
+
+        private static string LogFolder => Path.Combine(AppContext.BaseDirectory, "logs");
+        private static string LogPath => Path.Combine(LogFolder, $"log_{DateTime.Now:yyyy-MM-dd}.txt");
+
         static Logger()
         {
-            if (Properties.Settings.Default.CreateLogFile)
+            try
             {
-                CreateLog();
+                Directory.CreateDirectory(LogFolder);
+                // Write session header at the start of each run
+                File.AppendAllText(LogPath,
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [INFO] Session started — Version {typeof(MainWindow).Assembly.GetName().Version}\r\n");
             }
-            Properties.Settings.Default.PropertyChanged += Default_PropertyChanged;
-        }
-
-        private static void Default_PropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName != "CreateLogFile")
-            {
-                return;
-            }
-            if (!Properties.Settings.Default.CreateLogFile)
-            {
-                return;
-            }
-            CreateLog();
-        }
-
-        private static void CreateLog()
-        {
-            File.WriteAllText("log.txt", DateTime.Now.ToString() + ": Version " + typeof(MainWindow).Assembly.GetName().Version + "\r\n");
+            catch { }
         }
 
         public static void Log(object message, LogType logType)
         {
-            if (message == null)
-            {
-                message = "null";
-            }
-            MessageLogged?.Invoke(null, new (message.ToString(), logType));
+            message ??= "null";
+            MessageLogged?.Invoke(null, new(message.ToString(), logType));
             messages.Add(new(message.ToString(), logType));
-            if (Properties.Settings.Default.CreateLogFile)
+            WriteToFile(logType, message.ToString());
+        }
+
+        public static void Log(object message) => Log(message, LogType.Normal);
+        public static void Success(object message) => Log(message, LogType.Success);
+        public static void Error(object message) => Log(message, LogType.Error);
+        public static void Warn(object message) => Log(message, LogType.Warning);
+
+        private static void WriteToFile(LogType logType, string message)
+        {
+            try
             {
-                StreamWriter writer = File.AppendText("log.txt");
-                writer.WriteLine(DateTime.Now.ToString() + ": " + message);
-                writer.Close();
+                var prefix = logType switch
+                {
+                    LogType.Error   => "ERROR",
+                    LogType.Warning => "WARN ",
+                    LogType.Success => "OK   ",
+                    _               => "INFO ",
+                };
+                File.AppendAllText(LogPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} [{prefix}] {message}\r\n");
             }
-            //Debug.WriteLine(message);
-        }
-        public static void Log(object message)
-        {
-            Log(message, LogType.Normal);
-        }
-        public static void Success(object message)
-        {
-            Log(message, LogType.Success);
-        }
-        public static void Error(object message)
-        {
-            Log(message, LogType.Error);
-        }
-        public static void Warn(object message)
-        {
-            Log(message, LogType.Warning);
+            catch { }
         }
     }
 
