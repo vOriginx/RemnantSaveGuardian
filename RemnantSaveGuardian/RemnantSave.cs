@@ -153,11 +153,12 @@ namespace RemnantSaveGuardian
             return saveFolder;
         }
 
-        public static string? FindWgsSaveFolder()
+        public static string? FindWgsSaveFolder(string? rootPath = null)
         {
-            if (!Directory.Exists(DefaultWgsSaveFolder))
+            var searchRoot = rootPath ?? DefaultWgsSaveFolder;
+            if (!Directory.Exists(searchRoot))
                 return null;
-            foreach (var dir in Directory.GetDirectories(DefaultWgsSaveFolder))
+            foreach (var dir in Directory.GetDirectories(searchRoot))
             {
                 if (File.Exists(Path.Combine(dir, "containers.index")))
                     return dir;
