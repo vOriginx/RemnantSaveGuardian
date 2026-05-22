@@ -57,25 +57,33 @@ wgs\
 
 ### How GUID files are mapped to named saves
 
-Once the user folder is found, the app collects every file in every subdirectory whose name does **not** start with `container`. It then sorts these files by two criteria:
+The app reads `containers.index` to get the authoritative mapping from container name to GUID subfolder. This file is maintained by the Xbox runtime and explicitly records which subfolder holds each save slot.
 
-1. **Subdirectory creation time** (ascending) — the oldest subdirectory was created first, which corresponds to the character profile
-2. **File size** (ascending, as a tiebreaker for same-age directories)
+The binary format of each entry inside `containers.index` is:
 
-The sorted files are renamed in order:
+```
+[uint32 nameLen] [UTF-16LE name] [uint32 nameLen] [UTF-16LE name] [uint32 typeLen] [UTF-16LE type] [5 flag bytes] [16-byte binary GUID]
+```
 
-| Sort position | Output name |
-|---|---|
-| 0 (oldest/smallest) | `profile.sav` |
-| 1 | `save_0.sav` |
-| 2 | `save_1.sav` |
-| … | … |
+The name appears twice consecutively; the 16-byte GUID decoded as `new Guid(bytes).ToString("N").ToUpperInvariant()` gives the exact subfolder name on disk. For example:
 
-These renamed copies are written to `Documents\RSG_Saves\`, which becomes the app's active save folder. The originals in the WGS package folder are never modified.
+| Container name | GUID subfolder (example) | Output name |
+|---|---|---|
+| `profile` | `ADE5F93C4FE04C51AE772A0BB76AB817` | `profile.sav` |
+| `save_0` | `84B24D100ABB4FD498F107044095FE9B` | `save_0.sav` |
+| `save_1` | `CA8B5811BEFF428FA1D3FD17E8966D12` | `save_1.sav` |
+
+Inside each GUID subfolder, the app finds the one file whose name does **not** start with `container` — that is the actual save data. The renamed copies are written to `Documents\RSG_Saves\`, which becomes the app's active save folder.
+
+If `containers.index` is absent or cannot be parsed, the app falls back to sorting by subdirectory creation time (oldest = profile) with file size as a tiebreaker.
 
 ### Live sync during gameplay
 
 A file system watcher monitors the WGS source folder while the app is running. When the game writes new save data (detected as any non-`container` file change in the WGS subdirectories), the app waits two seconds for the write to settle and then re-runs the sync automatically. This means backups trigger in response to in-game saves without any manual steps.
+
+### Restoring a backup
+
+When you restore a backup, the app writes the `.sav` files back to the WGS GUID files so the game picks them up immediately. Before overwriting each file the app creates a `.rsg_bak` safety copy alongside it; if any write fails, all already-overwritten files are automatically rolled back. The `.rsg_bak` files are deleted once the restore completes successfully.
 
 ## Known Issues
 - [Some items are missing from the world analyzer](https://github.com/Razzmatazzz/RemnantSaveGuardian/issues/43)

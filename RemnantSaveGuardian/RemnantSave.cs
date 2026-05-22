@@ -166,6 +166,79 @@ namespace RemnantSaveGuardian
             return null;
         }
 
+        /// <summary>
+        /// Parses the WGS containers.index binary file and returns a mapping of
+        /// container name (e.g. "profile", "save_0") to the GUID-named subfolder on disk.
+        /// </summary>
+        public static Dictionary<string, string> ParseContainersIndex(string indexPath)
+        {
+            var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (!File.Exists(indexPath))
+                return result;
+
+            try
+            {
+                var data = File.ReadAllBytes(indexPath);
+                int i = 0;
+                while (i < data.Length - 4)
+                {
+                    int nameLen = BitConverter.ToInt32(data, i);
+                    if (nameLen < 1 || nameLen > 64 || i + 4 + nameLen * 2 > data.Length)
+                    {
+                        i++;
+                        continue;
+                    }
+
+                    string name1 = Encoding.Unicode.GetString(data, i + 4, nameLen * 2).TrimEnd('\0');
+
+                    // Container names are short ASCII identifiers
+                    if (name1.Length == 0 || name1.Any(c => c < 32 || c > 126))
+                    {
+                        i++;
+                        continue;
+                    }
+
+                    int afterName1 = i + 4 + nameLen * 2;
+                    if (afterName1 + 4 > data.Length) { i++; continue; }
+
+                    // Container name appears twice consecutively
+                    int nameLen2 = BitConverter.ToInt32(data, afterName1);
+                    if (nameLen2 != nameLen) { i++; continue; }
+
+                    int name2Start = afterName1 + 4;
+                    if (name2Start + nameLen * 2 > data.Length) { i++; continue; }
+
+                    string name2 = Encoding.Unicode.GetString(data, name2Start, nameLen * 2).TrimEnd('\0');
+                    if (name2 != name1) { i++; continue; }
+
+                    int afterName2 = name2Start + nameLen * 2;
+                    if (afterName2 + 4 > data.Length) { i++; continue; }
+
+                    // Type string follows
+                    int typeLen = BitConverter.ToInt32(data, afterName2);
+                    if (typeLen < 0 || typeLen > 128 || afterName2 + 4 + typeLen * 2 > data.Length) { i++; continue; }
+
+                    int afterType = afterName2 + 4 + typeLen * 2;
+
+                    // 5 flag bytes then 16-byte binary GUID
+                    if (afterType + 5 + 16 > data.Length) { i++; continue; }
+
+                    var guidBytes = new byte[16];
+                    Array.Copy(data, afterType + 5, guidBytes, 0, 16);
+                    var guid = new Guid(guidBytes).ToString("N").ToUpperInvariant();
+
+                    result[name1] = guid;
+                    i = afterType + 5 + 16;
+                }
+            }
+            catch
+            {
+                // Return whatever was successfully parsed
+            }
+
+            return result;
+        }
+
         public static void SyncFromWgs(string wgsUserFolder, string destFolder)
         {
             if (!Directory.Exists(destFolder))
@@ -174,6 +247,30 @@ namespace RemnantSaveGuardian
             foreach (var file in Directory.GetFiles(destFolder))
                 File.Delete(file);
 
+            // Primary path: use containers.index to resolve exact GUID subfolder per save slot
+            var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
+            if (nameToGuid.Count > 0)
+            {
+                foreach (var kvp in nameToGuid)
+                {
+                    var guidFolderPath = Path.Combine(wgsUserFolder, kvp.Value);
+                    if (!Directory.Exists(guidFolderPath))
+                        continue;
+
+                    var source = Directory.GetFiles(guidFolderPath)
+                        .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
+                    if (source == null)
+                        continue;
+
+                    var destName = kvp.Key.Equals("profile", StringComparison.OrdinalIgnoreCase)
+                        ? "profile.sav"
+                        : $"{kvp.Key}.sav";
+                    File.Copy(source, Path.Combine(destFolder, destName), overwrite: true);
+                }
+                return;
+            }
+
+            // Fallback: sort by subfolder creation time then file size
             var files = new List<(string path, DateTime folderCreated, long size)>();
             foreach (var subdir in Directory.GetDirectories(wgsUserFolder))
             {
@@ -190,6 +287,66 @@ namespace RemnantSaveGuardian
             {
                 var destName = i == 0 ? "profile.sav" : $"save_{i - 1}.sav";
                 File.Copy(sorted[i].path, Path.Combine(destFolder, destName), overwrite: true);
+            }
+        }
+
+        /// <summary>
+        /// Copies named .sav files from sourceFolder back to their correct GUID files in the WGS
+        /// package folder so the game picks up the restored saves.
+        /// Each target file is backed up as {target}.rsg_bak before it is overwritten; if any write
+        /// fails, all previously overwritten files are automatically rolled back from their backups.
+        /// Returns false if containers.index cannot be parsed or if the operation is rolled back.
+        /// </summary>
+        public static bool RestoreToWgs(string sourceFolder, string wgsUserFolder)
+        {
+            var nameToGuid = ParseContainersIndex(Path.Combine(wgsUserFolder, "containers.index"));
+            if (nameToGuid.Count == 0)
+                return false;
+
+            var written = new List<(string target, string backup)>();
+
+            try
+            {
+                foreach (var savFile in Directory.GetFiles(sourceFolder, "*.sav"))
+                {
+                    var containerName = Path.GetFileNameWithoutExtension(savFile); // "profile", "save_0", …
+                    if (!nameToGuid.TryGetValue(containerName, out var guidSubfolder))
+                        continue;
+
+                    var guidFolderPath = Path.Combine(wgsUserFolder, guidSubfolder);
+                    if (!Directory.Exists(guidFolderPath))
+                        continue;
+
+                    var target = Directory.GetFiles(guidFolderPath)
+                        .FirstOrDefault(f => !Path.GetFileName(f).StartsWith("container", StringComparison.OrdinalIgnoreCase));
+                    if (target == null)
+                        continue;
+
+                    // Create a safety backup before overwriting
+                    var backup = target + ".rsg_bak";
+                    File.Copy(target, backup, overwrite: true);
+                    written.Add((target, backup));
+
+                    File.Copy(savFile, target, overwrite: true);
+                }
+
+                // All writes succeeded — clean up backups
+                foreach (var (_, backup) in written)
+                {
+                    try { File.Delete(backup); } catch { }
+                }
+
+                return true;
+            }
+            catch
+            {
+                // Roll back every file already overwritten, then clean up backup copies
+                foreach (var (target, backup) in written)
+                {
+                    try { File.Copy(backup, target, overwrite: true); } catch { }
+                    try { File.Delete(backup); } catch { }
+                }
+                return false;
             }
         }
 

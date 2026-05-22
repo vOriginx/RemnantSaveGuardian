@@ -98,10 +98,17 @@ namespace RemnantSaveGuardian.Views.Windows
                         if (wgsSource != null)
                         {
                             var destFolder = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "RSG_Saves");
-                            Logger.Log("Xbox Game Pass saves detected, syncing...");
-                            RemnantSave.SyncFromWgs(wgsSource, destFolder);
-                            Properties.Settings.Default.SaveFolder = destFolder;
-                            Logger.Log("Xbox Game Pass saves synced.");
+                            try
+                            {
+                                Logger.Log("Xbox Game Pass saves detected, syncing...");
+                                RemnantSave.SyncFromWgs(wgsSource, destFolder);
+                                Properties.Settings.Default.SaveFolder = destFolder;
+                                Logger.Log("Xbox Game Pass saves synced.");
+                            }
+                            catch (Exception wgsEx)
+                            {
+                                Logger.Error($"Failed to sync Xbox Game Pass saves: {wgsEx.Message}");
+                            }
                         }
                         else
                         {
@@ -128,7 +135,14 @@ namespace RemnantSaveGuardian.Views.Windows
                     var wgsSource = RemnantSave.FindWgsSaveFolder();
                     if (wgsSource != null)
                     {
-                        RemnantSave.SyncFromWgs(wgsSource, wgsDestFolder);
+                        try
+                        {
+                            RemnantSave.SyncFromWgs(wgsSource, wgsDestFolder);
+                        }
+                        catch (Exception wgsEx)
+                        {
+                            Logger.Error($"Failed to sync Xbox Game Pass saves: {wgsEx.Message}");
+                        }
                         SaveWatcher.WatchWgs(wgsSource, wgsDestFolder);
                     }
                 }
