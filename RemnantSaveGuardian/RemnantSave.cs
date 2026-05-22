@@ -142,7 +142,7 @@ namespace RemnantSaveGuardian
                     return userFolders[0];
                 }
             }
-            else
+            else if (Directory.Exists(saveFolder))
             {
                 var folders = Directory.GetDirectories(saveFolder);
                 if (folders.Length > 0)
