@@ -76,7 +76,7 @@ The name appears twice consecutively; the 16-byte GUID decoded as `new Guid(byte
 | `save_0` | `84B24D100ABB4FD498F107044095FE9B` | `save_0.sav` |
 | `save_1` | `CA8B5811BEFF428FA1D3FD17E8966D12` | `save_1.sav` |
 
-Inside each GUID subfolder, the app finds the one file whose name does **not** start with `container` — that is the actual save data. The renamed copies are written to `Documents\RSG_Saves\`, which becomes the app's active save folder.
+Inside each GUID subfolder, the app finds the one file whose name does **not** start with `container` — that is the actual save data. The renamed copies are written to `%LOCALAPPDATA%\RemnantSaveGuardian\Saves\`, which becomes the app's active save folder.
 
 If `containers.index` is absent or cannot be parsed, the app falls back to sorting by subdirectory creation time (oldest = profile) with file size as a tiebreaker.
 
